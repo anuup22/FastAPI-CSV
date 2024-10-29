@@ -9,3 +9,4 @@ class User(Base):
     lastName = Column(String, index=True)
     age = Column(Integer)
     email = Column(String, unique=True, index=True)
+    fileName = Column(String, index=True)
