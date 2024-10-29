@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Depends
 from sqlalchemy.orm import Session
 import pandas as pd
 from . import models, database
+from io import StringIO
 
 app = FastAPI()
 
@@ -16,17 +17,25 @@ def get_db():
 
 @app.post("/upload-csv/")
 async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    df = pd.read_csv(file.file)
-    for _, row in df.iterrows():
-        user = models.User(
-            firstName=row['FirstName'],
-            lastName=row['LastName'],
-            age=row['Age'],
-            email=row['Email'],
-            fileName=file.filename
-        )
-        db.add(user)
-    db.commit()
+    # Read the file in chunks
+    chunk_size = 1000
+    file_content = await file.read()
+    file_stream = StringIO(file_content.decode('utf-8'))
+    
+    for chunk in pd.read_csv(file_stream, chunksize=chunk_size):
+        users = [
+            models.User(
+                firstName=row['FirstName'],
+                lastName=row['LastName'],
+                age=row['Age'],
+                email=row['Email'],
+                fileName=file.filename
+            )
+            for _, row in chunk.iterrows()
+        ]
+        db.bulk_save_objects(users)
+        db.commit()
+    
     return {"message": "CSV data inserted successfully"}
 
 @app.get("/users/")
