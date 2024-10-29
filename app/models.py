@@ -9,4 +9,3 @@ class User(Base):
     lastName = Column(String, index=True)
     age = Column(Integer)
     email = Column(String, index=True)
-    fileName = Column(String, index=True)
