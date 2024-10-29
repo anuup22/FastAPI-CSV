@@ -8,5 +8,5 @@ class User(Base):
     firstName = Column(String, index=True)
     lastName = Column(String, index=True)
     age = Column(Integer)
-    email = Column(String, unique=True, index=True)
+    email = Column(String, index=True)
     fileName = Column(String, index=True)

@@ -22,8 +22,14 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
             firstName=row['FirstName'],
             lastName=row['LastName'],
             age=row['Age'],
-            email=row['Email']
+            email=row['Email'],
+            fileName=file.filename
         )
         db.add(user)
     db.commit()
     return {"message": "CSV data inserted successfully"}
+
+@app.get("/users/")
+def get_users(db: Session = Depends(get_db)):
+    users = db.query(models.User).all()
+    return users
