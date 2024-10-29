@@ -58,8 +58,9 @@ async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(
     return {"message": "CSV file is being processed in the background"}
 
 @app.get("/users/")
-def get_users(db: Session = Depends(get_db)):
-    users = db.query(models.User).all()
+def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)):
+    offset = (page - 1) * limit
+    users = db.query(models.User).offset(offset).limit(limit).all()
     return users
 
 @app.get("/users/{user_id}")
