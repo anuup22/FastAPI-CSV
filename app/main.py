@@ -1,10 +1,12 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 import pandas as pd
 from . import models
 from .database import engine, get_db
 from io import StringIO
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from .schemas import BaseResponse, UsersResponse, UserResponse, User
 
 app = FastAPI()
@@ -12,10 +14,13 @@ logging.basicConfig(level=logging.INFO)
 
 models.Base.metadata.create_all(bind=engine)
 
-# Function to process CSV files
-def process_csv(file_content: bytes, filename: str) -> None:
+# Define a ThreadPoolExecutor for blocking tasks
+executor = ThreadPoolExecutor()
+
+def process_csv_blocking(file_content: bytes, filename: str):
     """
-    Processes a CSV file, reading user data and saving it to the database.
+    Blocking function to process CSV and save data to the database.
+    Runs in a separate thread to avoid blocking the main event loop.
     
     Args:
         file_content (bytes): The content of the uploaded CSV file.
@@ -46,7 +51,18 @@ def process_csv(file_content: bytes, filename: str) -> None:
     finally:
         db.close()
 
-# Root endpoint
+async def process_csv_async(file_content: bytes, filename: str):
+    """
+    Asynchronous wrapper to run CSV processing in a thread to avoid blocking.
+    Uses run_in_executor to offload the blocking task.
+    
+    Args:
+        file_content (bytes): The content of the uploaded CSV file.
+        filename (str): The name of the uploaded file.
+    """
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(executor, process_csv_blocking, file_content, filename)
+
 @app.get("/")
 def read_root() -> BaseResponse:
     """
@@ -57,11 +73,10 @@ def read_root() -> BaseResponse:
     """
     return BaseResponse(success=True, message="Welcome to the User Management API")
 
-# Endpoint to upload CSV files
 @app.post("/upload-csv/", response_model=BaseResponse)
-async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(...)) -> BaseResponse:
+async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
     """
-    Uploads a CSV file and processes it in the background.
+    Uploads a CSV file and processes it asynchronously in a separate thread.
     
     Args:
         file (UploadFile): The uploaded CSV file.
@@ -76,11 +91,10 @@ async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
     
     file_content = await file.read()
-    background_tasks.add_task(process_csv, file_content, file.filename)
+    asyncio.create_task(process_csv_async(file_content, file.filename))  # Process CSV in the background
     
     return BaseResponse(success=True, message="CSV file is being processed in the background")
 
-# Endpoint to get a paginated list of users
 @app.get("/users/", response_model=UsersResponse)
 def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> UsersResponse:
     """
