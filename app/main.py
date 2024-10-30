@@ -70,7 +70,6 @@ async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(
     Uploads a CSV file and processes it in the background.
     
     Args:
-        background_tasks (BackgroundTasks): FastAPI background tasks manager.
         file (UploadFile): The uploaded CSV file.
 
     Raises:
@@ -96,7 +95,6 @@ def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> 
     Args:
         limit (int): The number of users to return per page.
         page (int): The page number to retrieve.
-        db (Session): The database session.
 
     Returns:
         UsersResponse: A response containing the list of users.
@@ -113,7 +111,6 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     
     Args:
         user_id (int): The ID of the user to retrieve.
-        db (Session): The database session.
 
     Raises:
         HTTPException: If the user is not found.
