@@ -1,14 +1,12 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Any, List, Optional
+from pydantic import BaseModel
+from typing import List
 
-class BaseResponse(BaseModel):
-    success: bool
-    message: Optional[str] = None
+class UserCreate(BaseModel):
+    firstName: str
+    lastName: str
+    age: int
+    email: str
 
-    class Config:
-        from_attributes = True
-
-# User model for responses
 class User(BaseModel):
     id: int
     firstName: str
@@ -16,8 +14,17 @@ class User(BaseModel):
     age: int
     email: str
 
-class UserResponse(BaseResponse):
+    class Config:
+        from_attributes = True
+
+class UserResponse(BaseModel):
+    success: bool
     data: User
 
-class UsersResponse(BaseResponse):
+class UsersResponse(BaseModel):
+    success: bool
     data: List[User]
+
+class BaseResponse(BaseModel):
+    success: bool
+    message: str

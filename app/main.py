@@ -59,7 +59,7 @@ def read_root() -> BaseResponse:
 
 # Endpoint to upload CSV files
 @app.post("/upload-csv/", response_model=BaseResponse)
-async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(...)) -> BaseResponse:
     """
     Uploads a CSV file and processes it in the background.
     
@@ -95,7 +95,8 @@ def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> 
     """
     offset = (page - 1) * limit
     users = db.query(models.User).offset(offset).limit(limit).all()
-    return UsersResponse(success=True, data=[User.model_validate(user) for user in users])
+    user_responses = [User.model_validate(user) for user in users]
+    return UsersResponse(success=True, data=user_responses)
 
 # Endpoint to get a specific user by ID
 @app.get("/users/{user_id}", response_model=UserResponse)
