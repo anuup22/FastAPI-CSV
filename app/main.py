@@ -1,7 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import pandas as pd
-from . import models, database
+from . import models
+from .database import engine, get_db
 from io import StringIO
 import logging
 from .schemas import BaseResponse, UsersResponse, UserResponse, User
@@ -9,14 +10,7 @@ from .schemas import BaseResponse, UsersResponse, UserResponse, User
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 
-models.Base.metadata.create_all(bind=database.engine)
-
-def get_db():
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+models.Base.metadata.create_all(bind=engine)
 
 # Function to process CSV files
 def process_csv(file_content: bytes, filename: str) -> None:
