@@ -1,9 +1,10 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 import pandas as pd
 from . import models
 from .database import engine, get_db
 from io import StringIO
+import asyncio
 import logging
 from .schemas import BaseResponse, UsersResponse, UserResponse, User
 
@@ -12,10 +13,33 @@ logging.basicConfig(level=logging.INFO)
 
 models.Base.metadata.create_all(bind=engine)
 
-# Function to process CSV files
-def process_csv(file_content: bytes, filename: str) -> None:
+# Define a queue for asynchronous batch processing
+queue = asyncio.Queue()
+
+async def worker():
     """
-    Processes a CSV file, reading user data and saving it to the database.
+    Worker coroutine to process items from the queue and insert them into the database.
+    """
+    db = next(get_db())  # Create a database session for the worker
+    while True:
+        batch = await queue.get()
+        try:
+            db.bulk_save_objects(batch)
+            db.commit()
+            logging.info("Batch inserted successfully.")
+        except Exception as e:
+            db.rollback()
+            logging.error(f"An error occurred while inserting batch: {str(e)}")
+        finally:
+            queue.task_done()  # Mark task as done
+
+# Start a few worker tasks in the background
+for _ in range(5):  # Adjust the number of workers based on load
+    asyncio.create_task(worker())
+
+async def process_csv_async(file_content: bytes, filename: str):
+    """
+    Asynchronous function to read and process the CSV file in chunks and add them to the queue.
     
     Args:
         file_content (bytes): The content of the uploaded CSV file.
@@ -23,9 +47,9 @@ def process_csv(file_content: bytes, filename: str) -> None:
     """
     chunk_size = 1000
     file_stream = StringIO(file_content.decode('utf-8'))
-    db = next(get_db())
 
     try:
+        # Process the CSV file in chunks and add each chunk to the queue
         for chunk in pd.read_csv(file_stream, chunksize=chunk_size):
             users = [
                 models.User(
@@ -36,17 +60,12 @@ def process_csv(file_content: bytes, filename: str) -> None:
                 )
                 for _, row in chunk.iterrows()
             ]
-            db.bulk_save_objects(users)
-            db.commit()
-        logging.info(f"CSV file '{filename}' processed successfully.")
+            await queue.put(users)  # Add the batch of users to the queue
+        logging.info(f"CSV file '{filename}' is being processed in the background.")
     except Exception as e:
-        db.rollback()
         logging.error(f"An error occurred while processing the CSV '{filename}': {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred while processing the CSV: {str(e)}")
-    finally:
-        db.close()
 
-# Root endpoint
 @app.get("/")
 def read_root() -> BaseResponse:
     """
@@ -57,11 +76,10 @@ def read_root() -> BaseResponse:
     """
     return BaseResponse(success=True, message="Welcome to the User Management API")
 
-# Endpoint to upload CSV files
 @app.post("/upload-csv/", response_model=BaseResponse)
-async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(...)) -> BaseResponse:
+async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
     """
-    Uploads a CSV file and processes it in the background.
+    Uploads a CSV file and processes it asynchronously in the background.
     
     Args:
         file (UploadFile): The uploaded CSV file.
@@ -76,11 +94,10 @@ async def upload_csv(background_tasks: BackgroundTasks, file: UploadFile = File(
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
     
     file_content = await file.read()
-    background_tasks.add_task(process_csv, file_content, file.filename)
+    asyncio.create_task(process_csv_async(file_content, file.filename))  # Process CSV in the background
     
     return BaseResponse(success=True, message="CSV file is being processed in the background")
 
-# Endpoint to get a paginated list of users
 @app.get("/users/", response_model=UsersResponse)
 def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> UsersResponse:
     """
