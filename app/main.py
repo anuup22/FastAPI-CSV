@@ -91,12 +91,17 @@ def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> 
         page (int): The page number to retrieve.
 
     Returns:
-        UsersResponse: A response containing the list of users.
+        UsersResponse: A response containing the list of users, total pages, and next page.
     """
+    total_users = db.query(models.User).count()
+    total_pages = (total_users + limit - 1) // limit  # Calculate total pages
     offset = (page - 1) * limit
     users = db.query(models.User).offset(offset).limit(limit).all()
     user_responses = [User.model_validate(user) for user in users]
-    return UsersResponse(success=True, data=user_responses)
+    
+    next_page = page < total_pages
+    
+    return UsersResponse(success=True, data=user_responses, total_pages=total_pages, next_page=next_page)
 
 # Endpoint to get a specific user by ID
 @app.get("/users/{user_id}", response_model=UserResponse)

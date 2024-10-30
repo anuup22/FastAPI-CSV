@@ -23,6 +23,8 @@ class UserResponse(BaseModel):
 
 class UsersResponse(BaseModel):
     success: bool
+    next_page: bool
+    total_pages: int
     data: List[User]
 
 class BaseResponse(BaseModel):
