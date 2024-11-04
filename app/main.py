@@ -16,11 +16,15 @@ models.Base.metadata.create_all(bind=engine)
 # Define a queue for asynchronous batch processing
 queue = asyncio.Queue()
 
+# --------------------------------- Asynchronous Background Task ---------------------------------
 async def worker():
     """
     Worker coroutine to process items from the queue and insert them into the database.
     """
-    db = next(get_db())  # Create a database session for the worker
+    # Creating a new database session for each worker
+    db = next(get_db())
+
+    # Continuously process items from the queue
     while True:
         batch = await queue.get()
         try:
@@ -33,9 +37,12 @@ async def worker():
         finally:
             queue.task_done()  # Mark task as done
 
-# Start a few worker tasks in the background
-for _ in range(5):  # Adjust the number of workers based on load
+# --------------------------------- Start n = 5 Worker Tasks ---------------------------------
+
+for _ in range(5):
     asyncio.create_task(worker())
+
+# --------------------------------- Utility Function to Process CSV File ---------------------------------
 
 async def process_csv_async(file_content: bytes, filename: str):
     """
@@ -60,12 +67,20 @@ async def process_csv_async(file_content: bytes, filename: str):
                 )
                 for _, row in chunk.iterrows()
             ]
-            await queue.put(users)  # Add the batch of users to the queue
+
+            # Add the chunk of data to the queue
+            await queue.put(users)  
+
         logging.info(f"CSV file '{filename}' is being processed in the background.")
+
     except Exception as e:
         logging.error(f"An error occurred while processing the CSV '{filename}': {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred while processing the CSV: {str(e)}")
 
+
+# --------------------------------- API Endpoints ---------------------------------
+
+# 1. Root endpoint
 @app.get("/")
 def read_root() -> BaseResponse:
     """
@@ -76,6 +91,7 @@ def read_root() -> BaseResponse:
     """
     return BaseResponse(success=True, message="Welcome to the User Management API")
 
+# 2. Upload CSV endpoint
 @app.post("/upload-csv/", response_model=BaseResponse)
 async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
     """
@@ -94,10 +110,13 @@ async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
     
     file_content = await file.read()
-    asyncio.create_task(process_csv_async(file_content, file.filename))  # Process CSV in the background
+
+    # Creating coroutine to process the CSV file asynchronously
+    asyncio.create_task(process_csv_async(file_content, file.filename))  
     
     return BaseResponse(success=True, message="CSV file is being processed in the background")
 
+# 3. Get Users endpoint
 @app.get("/users/", response_model=UsersResponse)
 def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> UsersResponse:
     """
@@ -120,7 +139,7 @@ def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> 
     
     return UsersResponse(success=True, data=user_responses, total_pages=total_pages, next_page=next_page)
 
-# Endpoint to get a specific user by ID
+# 4. Get User by ID endpoint
 @app.get("/users/{user_id}", response_model=UserResponse)
 def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     """
@@ -139,3 +158,25 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(success=True, data=User.model_validate(user))
+
+# 5. Add User endpoint
+@app.post("/users/", response_model=UserResponse)
+def add_user(user: User, db: Session = Depends(get_db)) -> UserResponse:
+    """
+    Adds a new user to the database.
+    
+    Args:
+        user (User): The user details to add.
+
+    Returns:
+        UserResponse: A response containing the added user's details.
+    """
+    new_user = models.User(
+        firstName=user.firstName,
+        lastName=user.lastName,
+        age=user.age,
+        email=user.email
+    )
+    db.add(new_user)
+    db.commit()
+    return UserResponse(success=True, data=User.model_validate(new_user))
