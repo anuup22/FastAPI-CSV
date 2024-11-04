@@ -31,11 +31,12 @@ async def worker():
             db.bulk_save_objects(batch)
             db.commit()
             logging.info("Batch inserted successfully.")
+            queue.task_done()  # Mark task as done
         except Exception as e:
+            await queue.put(batch)  # Put the batch back in the queue
             db.rollback()
             logging.error(f"An error occurred while inserting batch: {str(e)}")
-        finally:
-            queue.task_done()  # Mark task as done
+            
 
 # --------------------------------- Start n = 5 Worker Tasks ---------------------------------
 
@@ -158,25 +159,3 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(success=True, data=User.model_validate(user))
-
-# 5. Add User endpoint
-@app.post("/users/", response_model=UserResponse)
-def add_user(user: User, db: Session = Depends(get_db)) -> UserResponse:
-    """
-    Adds a new user to the database.
-    
-    Args:
-        user (User): The user details to add.
-
-    Returns:
-        UserResponse: A response containing the added user's details.
-    """
-    new_user = models.User(
-        firstName=user.firstName,
-        lastName=user.lastName,
-        age=user.age,
-        email=user.email
-    )
-    db.add(new_user)
-    db.commit()
-    return UserResponse(success=True, data=User.model_validate(new_user))
