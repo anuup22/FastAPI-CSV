@@ -1,17 +1,29 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 import pandas as pd
 from . import models
 from .database import engine, get_db
 from io import StringIO
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 from .schemas import BaseResponse, UsersResponse, UserResponse, User
 
-app = FastAPI()
-logging.basicConfig(level=logging.INFO)
+# Create tables if they don't exist
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
 
-models.Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+    # TODO: execute something while closing the app
+
+app = FastAPI(lifespan=lifespan)
+logging.basicConfig(level=logging.INFO)
+    
 
 # Queue for asynchronous batch processing
 queue = asyncio.Queue()
@@ -21,14 +33,16 @@ async def worker():
     """
     Worker coroutine to process items from the queue and insert them into the database.
     """
-    # Creating a new database session for each worker
-    db = next(get_db())
-
     # Continuously process items from the queue
     while True:
+        # Retrieve a single batch from the queue
         batch = await queue.get()
+        
+        # Create a new session by fetching from the async generator
+        db = await anext(get_db())
+
         try:
-            db.bulk_save_objects(batch)
+            db.add_all(batch)
             await db.commit()
 
             logging.info("Batch inserted successfully.")
@@ -37,10 +51,10 @@ async def worker():
             await queue.put(batch)  # Put the batch back in the queue
             await db.rollback()
             logging.error(f"An error occurred while inserting batch: {str(e)}")
-            
+        finally:
+            await db.close()  # Explicitly close the session
 
-# --------------------------------- Start 5 Workers ---------------------------------
-
+# Start workers
 for _ in range(5):
     asyncio.create_task(worker())
 
@@ -71,14 +85,13 @@ async def process_csv_async(file_content: bytes, filename: str):
             ]
 
             # Add the chunk of data to the queue
-            await queue.put(users)  
+            await queue.put(users)
 
         logging.info(f"CSV file '{filename}' is being processed in the background.")
 
     except Exception as e:
         logging.error(f"An error occurred while processing the CSV '{filename}': {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred while processing the CSV: {str(e)}")
-
 
 # --------------------------------- API Endpoints ---------------------------------
 
@@ -113,14 +126,18 @@ async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
     
     file_content = await file.read()
 
-    # Creating coroutine to process the CSV file asynchronously
+    # Process the CSV file asynchronously
     asyncio.create_task(process_csv_async(file_content, file.filename))  
     
     return BaseResponse(success=True, message="CSV file is being processed in the background")
 
 # 3. Get Users endpoint
 @app.get("/users/", response_model=UsersResponse)
-async def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> UsersResponse:
+async def get_users(
+    limit: int = 10,
+    page: int = 1,
+    db: AsyncSession = Depends(get_db)
+) -> UsersResponse:
     """
     Retrieves a paginated list of users from the database.
     
@@ -132,20 +149,29 @@ async def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db
         UsersResponse: A response containing the list of users, total pages, and next page.
     """
     offset = (page - 1) * limit
-    users = await db.query(models.User).offset(offset).limit(limit).all()
-
-    total_users = users.count()
-    total_pages = (total_users + limit - 1) // limit  # Calculate total pages
-
-    user_responses = [User.model_validate(user) for user in users]
     
+    # Fetch users with pagination
+    result = await db.execute(select(models.User).offset(offset).limit(limit))
+    users = result.scalars().all()
+    
+    # Validate and serialize user data
+    user_responses = [User.model_validate(user) for user in users]
+
+    # Fetch total number of users for pagination
+    total_users_result = await db.execute(select(models.User))
+    total_users = len(total_users_result.scalars().all())  # Use count() for efficiency
+    total_pages = (total_users + limit - 1) // limit  # Calculate total pages
     next_page = page < total_pages
     
-    return UsersResponse(success=True, data=user_responses, total_pages=total_pages, next_page=next_page)
+    return UsersResponse(
+        success=True,
+        data=user_responses,
+        total_pages=total_pages,
+        next_page=next_page
+    )
 
-# 4. Get User by ID endpoint
 @app.get("/users/{user_id}", response_model=UserResponse)
-async def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
+async def get_user(user_id: int, db: AsyncSession = Depends(get_db)) -> UserResponse:
     """
     Retrieves a user by their ID.
     
@@ -158,7 +184,8 @@ async def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     Returns:
         UserResponse: A response containing the user's details.
     """
-    user = await db.query(models.User).filter(models.User.id == user_id).first()
+    result = await db.execute(select(models.User).filter(models.User.id == user_id))
+    user = result.scalars().first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(success=True, data=User.model_validate(user))
