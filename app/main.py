@@ -35,7 +35,7 @@ async def worker():
             queue.task_done()  # Mark task as done
         except Exception as e:
             await queue.put(batch)  # Put the batch back in the queue
-            db.rollback()
+            await db.rollback()
             logging.error(f"An error occurred while inserting batch: {str(e)}")
             
 
