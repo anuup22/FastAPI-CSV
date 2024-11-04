@@ -19,7 +19,7 @@ async def init_db():
 async def lifespan(app: FastAPI):
     await init_db()
     yield
-    # TODO: execute something while closing the app
+    await engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
 logging.basicConfig(level=logging.INFO)
@@ -30,17 +30,12 @@ queue = asyncio.Queue()
 
 # --------------------------------- Asynchronous Background Task ---------------------------------
 async def worker():
-    """
-    Worker coroutine to process items from the queue and insert them into the database.
-    """
+    # Create a new session by fetching from the async generator
+    db = await anext(get_db())
     # Continuously process items from the queue
     while True:
         # Retrieve a single batch from the queue
         batch = await queue.get()
-        
-        # Create a new session by fetching from the async generator
-        db = await anext(get_db())
-
         try:
             db.add_all(batch)
             await db.commit()
@@ -51,8 +46,6 @@ async def worker():
             await queue.put(batch)  # Put the batch back in the queue
             await db.rollback()
             logging.error(f"An error occurred while inserting batch: {str(e)}")
-        finally:
-            await db.close()  # Explicitly close the session
 
 # Start workers
 for _ in range(5):
@@ -61,13 +54,6 @@ for _ in range(5):
 # --------------------------------- Utility Function to Process CSV File ---------------------------------
 
 async def process_csv_async(file_content: bytes, filename: str):
-    """
-    Asynchronous function to read and process the CSV file in chunks and add them to the queue.
-    
-    Args:
-        file_content (bytes): The content of the uploaded CSV file.
-        filename (str): The name of the uploaded file.
-    """
     chunk_size = 1000
     file_stream = StringIO(file_content.decode('utf-8'))
 
@@ -109,24 +95,11 @@ def read_root() -> BaseResponse:
 # 2. Upload CSV endpoint
 @app.post("/upload-csv/", response_model=BaseResponse)
 async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
-    """
-    Uploads a CSV file and processes it asynchronously in the background.
-    
-    Args:
-        file (UploadFile): The uploaded CSV file.
-
-    Raises:
-        HTTPException: If the file type is invalid.
-
-    Returns:
-        BaseResponse: A response indicating that the CSV file is being processed.
-    """
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
     
     file_content = await file.read()
 
-    # Process the CSV file asynchronously
     asyncio.create_task(process_csv_async(file_content, file.filename))  
     
     return BaseResponse(success=True, message="CSV file is being processed in the background")
