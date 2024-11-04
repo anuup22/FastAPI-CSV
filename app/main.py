@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 
 models.Base.metadata.create_all(bind=engine)
 
-# Define a queue for asynchronous batch processing
+# Queue for asynchronous batch processing
 queue = asyncio.Queue()
 
 # --------------------------------- Asynchronous Background Task ---------------------------------
@@ -29,7 +29,8 @@ async def worker():
         batch = await queue.get()
         try:
             db.bulk_save_objects(batch)
-            db.commit()
+            await db.commit()
+
             logging.info("Batch inserted successfully.")
             queue.task_done()  # Mark task as done
         except Exception as e:
@@ -38,7 +39,7 @@ async def worker():
             logging.error(f"An error occurred while inserting batch: {str(e)}")
             
 
-# --------------------------------- Start n = 5 Worker Tasks ---------------------------------
+# --------------------------------- Start 5 Workers ---------------------------------
 
 for _ in range(5):
     asyncio.create_task(worker())
@@ -119,7 +120,7 @@ async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
 
 # 3. Get Users endpoint
 @app.get("/users/", response_model=UsersResponse)
-def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> UsersResponse:
+async def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> UsersResponse:
     """
     Retrieves a paginated list of users from the database.
     
@@ -130,10 +131,12 @@ def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> 
     Returns:
         UsersResponse: A response containing the list of users, total pages, and next page.
     """
-    total_users = db.query(models.User).count()
-    total_pages = (total_users + limit - 1) // limit  # Calculate total pages
     offset = (page - 1) * limit
-    users = db.query(models.User).offset(offset).limit(limit).all()
+    users = await db.query(models.User).offset(offset).limit(limit).all()
+
+    total_users = users.count()
+    total_pages = (total_users + limit - 1) // limit  # Calculate total pages
+
     user_responses = [User.model_validate(user) for user in users]
     
     next_page = page < total_pages
@@ -142,7 +145,7 @@ def get_users(limit: int = 10, page: int = 1, db: Session = Depends(get_db)) -> 
 
 # 4. Get User by ID endpoint
 @app.get("/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
+async def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     """
     Retrieves a user by their ID.
     
@@ -155,7 +158,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> UserResponse:
     Returns:
         UserResponse: A response containing the user's details.
     """
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    user = await db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(success=True, data=User.model_validate(user))
