@@ -33,4 +33,8 @@ Base = declarative_base()
 # Dependency to get the asynchronous database session
 async def get_db():
     async with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        except Exception as e:
+            print(f"Database session error: {e}")
+            raise
