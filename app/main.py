@@ -1,13 +1,13 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+import asyncio
+import logging
 import pandas as pd
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from contextlib import asynccontextmanager
+from io import StringIO
+from typing import Dict
 from . import models
 from .database import engine, get_db
-from io import StringIO
-import asyncio
-from contextlib import asynccontextmanager
-import logging
 from .schemas import BaseResponse
-from typing import Dict
 
 # Configuration
 NUM_WORKERS = 5  # Number of concurrent workers
@@ -45,24 +45,25 @@ async def db_worker(worker_id: int):
                     total = processing_status[file_id]["total_chunks"]
                     processing_status[file_id]["progress"] = (processed / total) * 100
                     
-                logging.info(f"Worker {worker_id}: Batch inserted successfully")
+                logging.info(f"Worker {worker_id}: {processing_status[file_id]["processed_chunks"]} Batch inserted successfully")
                 
             except Exception as e:
                 await db.rollback()
                 logging.error(f"Worker {worker_id}: Error inserting batch: {str(e)}")
-                # Requeue failed batch with exponential backoff
+                # Requeue failed batch for retry
                 await asyncio.sleep(1)
                 await queue.put((batch, file_id))
             
             finally:
+                # Notify queue that task is complete
                 queue.task_done()
                 
         except Exception as e:
             logging.error(f"Worker {worker_id}: Critical error: {str(e)}")
-            await asyncio.sleep(1)  # Prevent tight loop on critical errors
+            await asyncio.sleep(1) # Wait before retrying
 
 # --------------------------------- Worker Pool Management ---------------------------------
-async def ensure_workers():
+async def start_workers():
     """Ensure the worker pool is running"""
     workers = []
     for i in range(NUM_WORKERS):
@@ -77,7 +78,7 @@ workers = []
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global workers
-    workers = await ensure_workers()
+    workers = await start_workers()
     await init_db()
 
     yield
@@ -157,22 +158,10 @@ async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
     )
 
 @app.get("/process-status/", response_model=BaseResponse)
-async def get_process_status() -> BaseResponse:
+def get_process_status() -> BaseResponse:
     """Get the status of all CSV processing jobs"""
     return BaseResponse(
         success=True,
         message="Process status retrieved",
         data=processing_status
-    )
-
-@app.get("/process-status/{file_id}", response_model=BaseResponse)
-async def get_process_status(file_id: str) -> BaseResponse:
-    """Get the status of a CSV processing job"""
-    if file_id not in processing_status:
-        raise HTTPException(status_code=404, detail="Process ID not found")
-    
-    return BaseResponse(
-        success=True,
-        message="Process status retrieved",
-        data=processing_status[file_id]
     )
