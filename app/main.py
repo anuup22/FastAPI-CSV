@@ -1,6 +1,4 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 import pandas as pd
 from . import models
 from .database import engine, get_db
@@ -8,8 +6,8 @@ from io import StringIO
 import asyncio
 from contextlib import asynccontextmanager
 import logging
-from .schemas import BaseResponse, UsersResponse, UserResponse, User
-from typing import List, Dict
+from .schemas import BaseResponse
+from typing import Dict
 
 # Configuration
 NUM_WORKERS = 5  # Number of concurrent workers
