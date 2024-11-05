@@ -1,13 +1,15 @@
 import asyncio
 import logging
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query
+from sqlalchemy.sql import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from io import StringIO
 from typing import Dict
 from . import models
 from .database import engine, get_db
-from .schemas import BaseResponse
+from .schemas import User, BaseResponse, UsersResponse, UserResponse
 
 # Configuration
 NUM_WORKERS = 5  # Number of concurrent workers
@@ -165,3 +167,37 @@ def get_process_status() -> BaseResponse:
         message="Process status retrieved",
         data=processing_status
     )
+
+@app.get("/users/", response_model=UsersResponse)
+async def get_users(
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100)
+) -> UsersResponse:
+    """Get all users from the database with pagination"""
+    offset = (page - 1) * limit
+    query = models.User.__table__.select().limit(limit).offset(offset)
+    result = await db.execute(query)
+    users = [User.model_validate(user) for user in result]
+    
+    # Calculate total pages
+    total_users = await db.scalar(select(func.count()).select_from(models.User.__table__))
+    total_pages = (total_users + limit - 1) // limit
+    
+    return UsersResponse(
+        success=True,
+        next_page=(page < total_pages),
+        total_pages=total_pages,
+        data=users
+    )
+
+@app.get("/user/{user_id}/", response_model=UserResponse)
+async def get_user(user_id: int, db: AsyncSession = Depends(get_db)) -> UserResponse:
+    """Get a single user by ID"""
+    result = await db.execute(models.User.__table__.select().where(models.User.id == user_id))
+    user = result.first()
+
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return UserResponse(success=True, data=User.model_validate(user))
