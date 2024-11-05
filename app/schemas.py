@@ -30,3 +30,4 @@ class UsersResponse(BaseModel):
 class BaseResponse(BaseModel):
     success: bool
     message: str
+    data: dict

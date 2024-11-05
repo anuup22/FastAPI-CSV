@@ -158,6 +158,15 @@ async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
         data={"file_id": file_id}
     )
 
+@app.get("/process-status/", response_model=BaseResponse)
+async def get_process_status() -> BaseResponse:
+    """Get the status of all CSV processing jobs"""
+    return BaseResponse(
+        success=True,
+        message="Process status retrieved",
+        data=processing_status
+    )
+
 @app.get("/process-status/{file_id}", response_model=BaseResponse)
 async def get_process_status(file_id: str) -> BaseResponse:
     """Get the status of a CSV processing job"""
