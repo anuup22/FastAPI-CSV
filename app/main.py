@@ -30,39 +30,39 @@ processing_status: Dict[str, Dict] = {}
 # --------------------------------- Worker Pool ---------------------------------
 async def db_worker(worker_id: int):
     """Worker process that handles database insertions"""
-    db = await anext(get_db())
+    async with get_db() as db:
     
-    while True:
-        try:
-            batch, file_id = await queue.get()
-            
+        while True:
             try:
-                db.add_all(batch)
-                await db.commit()
+                batch, file_id = await queue.get()
                 
-                # Update processing status
-                if file_id in processing_status:
-                    processing_status[file_id]["processed_chunks"] += 1
-                    processed = processing_status[file_id]["processed_chunks"]
-                    total = processing_status[file_id]["total_chunks"]
-                    processing_status[file_id]["progress"] = (processed / total) * 100
+                try:
+                    db.add_all(batch)
+                    await db.commit()
                     
-                logging.info(f"Worker {worker_id}: {processing_status[file_id]["processed_chunks"]} Batch inserted successfully")
+                    # Update processing status
+                    if file_id in processing_status:
+                        processing_status[file_id]["processed_chunks"] += 1
+                        processed = processing_status[file_id]["processed_chunks"]
+                        total = processing_status[file_id]["total_chunks"]
+                        processing_status[file_id]["progress"] = (processed / total) * 100
+                        
+                    logging.info(f"Worker {worker_id}: {processing_status[file_id]['processed_chunks']} Batch inserted successfully")
+                    
+                except Exception as e:
+                    await db.rollback()
+                    logging.error(f"Worker {worker_id}: Error inserting batch: {str(e)}")
+                    # Requeue failed batch for retry
+                    await asyncio.sleep(1)
+                    await queue.put((batch, file_id))
                 
+                finally:
+                    # Notify queue that task is complete
+                    queue.task_done()
+                    
             except Exception as e:
-                await db.rollback()
-                logging.error(f"Worker {worker_id}: Error inserting batch: {str(e)}")
-                # Requeue failed batch for retry
-                await asyncio.sleep(1)
-                await queue.put((batch, file_id))
-            
-            finally:
-                # Notify queue that task is complete
-                queue.task_done()
-                
-        except Exception as e:
-            logging.error(f"Worker {worker_id}: Critical error: {str(e)}")
-            await asyncio.sleep(1) # Wait before retrying
+                logging.error(f"Worker {worker_id}: Critical error: {str(e)}")
+                await asyncio.sleep(1) # Wait before retrying
 
 # --------------------------------- Worker Pool Management ---------------------------------
 async def start_workers():
@@ -91,6 +91,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 logging.basicConfig(level=logging.INFO)
+file_dependency = File(...)
+db_dependency = Depends(get_db)
 
 # --------------------------------- CSV Processing ---------------------------------
 async def process_csv_async(file_content: bytes, filename: str):
@@ -142,7 +144,7 @@ async def process_csv_async(file_content: bytes, filename: str):
 
 # --------------------------------- API Endpoints ---------------------------------
 @app.post("/upload-csv/", response_model=BaseResponse)
-async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
+async def upload_csv(file: UploadFile = Depends(file_dependency)) -> BaseResponse:
     """Upload and process a CSV file"""
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
@@ -170,7 +172,7 @@ def get_process_status() -> BaseResponse:
 
 @app.get("/users/", response_model=UsersResponse)
 async def get_users(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = db_dependency,
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100)
 ) -> UsersResponse:
@@ -178,7 +180,7 @@ async def get_users(
     offset = (page - 1) * limit
     query = models.User.__table__.select().limit(limit).offset(offset)
     result = await db.execute(query)
-    users = [User.model_validate(user) for user in result]
+    users = [User.model_validate(user) for user in result.scalars()]
     
     # Calculate total pages
     total_users = await db.scalar(select(func.count()).select_from(models.User.__table__))
@@ -192,10 +194,10 @@ async def get_users(
     )
 
 @app.get("/user/{user_id}/", response_model=UserResponse)
-async def get_user(user_id: int, db: AsyncSession = Depends(get_db)) -> UserResponse:
+async def get_user(user_id: int, db: AsyncSession = db_dependency) -> UserResponse:
     """Get a single user by ID"""
-    result = await db.execute(models.User.__table__.select().where(models.User.id == user_id))
-    user = result.first()
+    result = await db.execute(select(models.User).where(models.User.id == user_id))
+    user = result.scalars().first()
 
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
