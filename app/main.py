@@ -12,6 +12,9 @@ from .database import engine, get_db
 from .schemas import User, BaseResponse, UsersResponse, UserResponse
 
 # Configuration
+logging.basicConfig(level=logging.INFO)
+db_dependency = Depends(get_db)
+
 NUM_WORKERS = 5  # Number of concurrent workers
 CHUNK_SIZE = 1000  # Rows per chunk
 MAX_QUEUE_SIZE = 10  # Maximum chunks in queue
@@ -90,9 +93,6 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
-logging.basicConfig(level=logging.INFO)
-file_dependency = File(...)
-db_dependency = Depends(get_db)
 
 # --------------------------------- CSV Processing ---------------------------------
 async def process_csv_async(file_content: bytes, filename: str):
@@ -144,7 +144,7 @@ async def process_csv_async(file_content: bytes, filename: str):
 
 # --------------------------------- API Endpoints ---------------------------------
 @app.post("/upload-csv/", response_model=BaseResponse)
-async def upload_csv(file: UploadFile = Depends(file_dependency)) -> BaseResponse:
+async def upload_csv(file: UploadFile = File(...)) -> BaseResponse:
     """Upload and process a CSV file"""
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
