@@ -23,8 +23,7 @@ SessionLocal = sessionmaker(
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False,
-    autoflush=False,
-    autocommit=False
+    autoflush=False
 )
 
 # Base class for declarative models
@@ -33,8 +32,4 @@ Base = declarative_base()
 # Dependency to get the asynchronous database session
 async def get_db():
     async with SessionLocal() as session:
-        try:
-            yield session
-        except Exception as e:
-            print(f"Database session error: {e}")
-            raise
+        yield session
