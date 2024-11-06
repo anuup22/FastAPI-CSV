@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from .core.config import settings
 from .core.worker_pool import worker_pool
-from .db.session import engine, SessionLocal
+from .db.session import engine
 from .db.base import Base
 from .api.v1.router import api_router
 
